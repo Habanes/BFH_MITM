@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  alice:
+    build:
+      context: ./src
+    networks:
+      - mitm_net
+    volumes:
+      - ./shared_volume:/app/shared
+    environment:
+      - SENDER=alice
+      - RECEIVER=bob
+
+  bob:
+    build:
+      context: ./src
+    networks:
+      - mitm_net
+    volumes:
+      - ./shared_volume:/app/shared
+    environment:
+      - SENDER=bob
+      - RECEIVER=alice
+
+networks:
+  mitm_net:
+    driver: bridge
