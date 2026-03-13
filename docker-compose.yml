@@ -1,26 +1,40 @@
 services:
-  alice:
+  alice: # The Client
     build:
       context: ./src
     networks:
-      - mitm_net
-    volumes:
-      - ./shared_volume:/app/shared
+      mitm_net:
+        ipv4_address: 172.20.0.2
     environment:
+      - ROLE=client
+      - TARGET_IP=172.20.0.4 # Connects to Eve
       - SENDER=alice
-      - RECEIVER=bob
+    depends_on:
+      - eve
 
-  bob:
+  bob: # The Server
     build:
       context: ./src
     networks:
-      - mitm_net
-    volumes:
-      - ./shared_volume:/app/shared
+      mitm_net:
+        ipv4_address: 172.20.0.3
     environment:
+      - ROLE=server
       - SENDER=bob
-      - RECEIVER=alice
+
+  eve: # The Attacker
+    build:
+      context: ./src
+    command: python eve.py
+    networks:
+      mitm_net:
+        ipv4_address: 172.20.0.4
+    depends_on:
+      - bob
 
 networks:
   mitm_net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24

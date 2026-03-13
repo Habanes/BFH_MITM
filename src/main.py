@@ -1,57 +1,34 @@
 import os
+import socket
 import time
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 
 # --- Configuration ---
-SHARED_DIR = "shared"
 KEY_SIZE = 2048
 PUBLIC_EXPONENT = 65537
-SENDER = os.environ.get("SENDER", "alice")
-RECEIVER = os.environ.get("RECEIVER", "bob")
+PORT = 12345
+ROLE = os.environ.get("ROLE", "server")
+TARGET_IP = os.environ.get("TARGET_IP")
+SENDER_NAME = os.environ.get("SENDER", "default_sender")
 
-
+# --- Utility Functions ---
 def generate_keys():
-    """Generates a new RSA private and public key pair."""
     private_key = rsa.generate_private_key(
-        public_exponent=PUBLIC_EXPONENT,
-        key_size=KEY_SIZE,
+        public_exponent=PUBLIC_EXPONENT, key_size=KEY_SIZE
     )
-    public_key = private_key.public_key()
-    return private_key, public_key
+    return private_key, private_key.public_key()
 
+def serialize_key(public_key):
+    return public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
 
-def save_key(key, filename):
-    """Saves a key to a file."""
-    with open(filename, "wb") as f:
-        if isinstance(key, rsa.RSAPrivateKey):
-            f.write(
-                key.private_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PrivateFormat.PKCS8,
-                    encryption_algorithm=serialization.NoEncryption(),
-                )
-            )
-        else:
-            f.write(
-                key.public_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PublicFormat.SubjectPublicKeyInfo,
-                )
-            )
-
-
-def load_key(filename, private=False):
-    """Loads a key from a file."""
-    with open(filename, "rb") as f:
-        if private:
-            return serialization.load_pem_private_key(f.read(), password=None)
-        else:
-            return serialization.load_pem_public_key(f.read())
-
+def deserialize_key(key_bytes):
+    return serialization.load_pem_public_key(key_bytes)
 
 def encrypt(message, public_key):
-    """Encrypts a message using a public key."""
     return public_key.encrypt(
         message.encode(),
         padding.OAEP(
@@ -61,9 +38,7 @@ def encrypt(message, public_key):
         ),
     )
 
-
 def decrypt(ciphertext, private_key):
-    """Decrypts a message using a private key."""
     try:
         return private_key.decrypt(
             ciphertext,
@@ -73,63 +48,84 @@ def decrypt(ciphertext, private_key):
                 label=None,
             ),
         ).decode()
-    except Exception as e:
-        return f"Decryption failed: {e}"
+    except Exception:
+        return "DECRYPTION_FAILED"
 
+def truncate(data, length=30):
+    """Truncates bytes for clean printing."""
+    return str(data[:length]) + "..." if len(data) > length else str(data)
 
-def main():
-    """Main function to run the communication simulation."""
-    sender_private_key_file = os.path.join(SHARED_DIR, f"{SENDER}_private.pem")
-    sender_public_key_file = os.path.join(SHARED_DIR, f"{SENDER}_public.pem")
-    receiver_public_key_file = os.path.join(SHARED_DIR, f"{RECEIVER}_public.pem")
+# --- Network Logic ---
+def handle_connection(conn, private_key, my_public_key):
+    """Generic handler for both client and server after connection."""
+    print(f"[{SENDER_NAME}] Connection established. Exchanging keys...")
+    
+    # 1. Exchange public keys
+    conn.sendall(serialize_key(my_public_key))
+    print(f"[{SENDER_NAME}] -> Sent public key.")
+    
+    their_public_key_bytes = conn.recv(2048)
+    their_public_key = deserialize_key(their_public_key_bytes)
+    print(f"[{SENDER_NAME}] <- Received peer's public key.")
 
-    # Create shared directory if it doesn't exist
-    os.makedirs(SHARED_DIR, exist_ok=True)
-
-    # Generate and save sender's keys if they don't exist
-    if not os.path.exists(sender_private_key_file):
-        print(f"[{SENDER}] Generating keys...")
-        private_key, public_key = generate_keys()
-        save_key(private_key, sender_private_key_file)
-        save_key(public_key, sender_public_key_file)
-        print(f"[{SENDER}] Keys generated and saved.")
-    else:
-        print(f"[{SENDER}] Keys already exist.")
-
-    private_key = load_key(sender_private_key_file, private=True)
-
-    # Wait for receiver's public key
-    print(f"[{SENDER}] Waiting for {RECEIVER}'s public key...")
-    while not os.path.exists(receiver_public_key_file):
-        time.sleep(1)
-    print(f"[{SENDER}] {RECEIVER}'s public key found.")
-    receiver_public_key = load_key(receiver_public_key_file)
-
-    # Communication loop
+    # 2. Communication loop
     message_count = 0
     while True:
-        # Send a message
-        message = f"Hello {RECEIVER}, this is {SENDER}. Message #{message_count}"
-        print(f"[{SENDER}] Sending: {message}")
-        encrypted_message = encrypt(message, receiver_public_key)
+        if ROLE == 'client':
+            # Clients initiate the conversation
+            message = f"Hello from {SENDER_NAME}, message #{message_count}"
+            encrypted_message = encrypt(message, their_public_key)
+            print(f"[{SENDER_NAME}] -> Sending: '{message}' (encrypted: {truncate(encrypted_message)})")
+            conn.sendall(encrypted_message)
+            
+            encrypted_ack = conn.recv(2048)
+            if not encrypted_ack: break
+            decrypted_ack = decrypt(encrypted_ack, private_key)
+            print(f"[{SENDER_NAME}] <- Received ack: '{decrypted_ack}' (encrypted: {truncate(encrypted_ack)})")
+            
+            message_count += 1
+            time.sleep(3)
+        else: # Server
+            # Servers respond
+            encrypted_message = conn.recv(2048)
+            if not encrypted_message: break
+            decrypted_message = decrypt(encrypted_message, private_key)
+            print(f"[{SENDER_NAME}] <- Received: '{decrypted_message}' (encrypted: {truncate(encrypted_message)})")
 
-        message_file = os.path.join(SHARED_DIR, f"{RECEIVER}.msg")
-        with open(message_file, "wb") as f:
-            f.write(encrypted_message)
+            ack_message = f"Ack from {SENDER_NAME}"
+            encrypted_ack = encrypt(ack_message, their_public_key)
+            print(f"[{SENDER_NAME}] -> Sending ack: '{ack_message}' (encrypted: {truncate(encrypted_ack)})")
+            conn.sendall(encrypted_ack)
 
-        message_count += 1
+def run_server(private_key, public_key):
+    """Server listens for one connection."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", PORT))
+        s.listen()
+        print(f"[{SENDER_NAME}] Server listening on port {PORT}...")
+        conn, addr = s.accept()
+        with conn:
+            handle_connection(conn, private_key, public_key)
 
-        # Check for incoming messages
-        my_message_file = os.path.join(SHARED_DIR, f"{SENDER}.msg")
-        if os.path.exists(my_message_file):
-            with open(my_message_file, "rb") as f:
-                ciphertext = f.read()
-            decrypted_message = decrypt(ciphertext, private_key)
-            print(f"[{SENDER}] Received: {decrypted_message}")
-            os.remove(my_message_file)
+def run_client(private_key, public_key):
+    """Client connects to the target."""
+    time.sleep(5) # Give server/proxy time to start
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        print(f"[{SENDER_NAME}] Client connecting to {TARGET_IP}:{PORT}...")
+        s.connect((TARGET_IP, PORT))
+        handle_connection(s, private_key, public_key)
 
-        time.sleep(1)
+def main():
+    """Main function to generate keys and start client or server."""
+    print(f"--- [{SENDER_NAME.upper()}] ---")
+    private_key, public_key = generate_keys()
+    print(f"[{SENDER_NAME}] Generated RSA key pair.")
 
+    if ROLE == "server":
+        run_server(private_key, public_key)
+    elif ROLE == "client":
+        run_client(private_key, public_key)
+    print(f"[{SENDER_NAME}] Shutting down.")
 
 if __name__ == "__main__":
     main()
