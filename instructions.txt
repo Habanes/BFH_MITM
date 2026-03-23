@@ -1,0 +1,62 @@
+We want to clean this entire notebook up. for this reason we move the party class outside in its own file with all the respective methods.
+We want to make it very simple and clean. we dont need real signings and all of this. we simply use these two encryption and decryption functions.
+
+the party class needs a Name attribute
+on instantiation it will generate a public key and a private key
+furthermore it can generate a nonce and save it in an attribute
+additionally it can generate a session key and save it in an attribute.
+
+then for demonstration purposes we just need the following methods:
+
+apply hashing (string, hashing function)
+apply encryption (string, ecryption function)
+apply decryption (string, decryption function)
+combine hash and message (message, hash) -- we just join the hash and the message together
+split hash and message (combined message, hash length) -- we need to know the number of characters in the hash to ensure we split at the correct part, we always combine hash+message
+
+push message to queue (string, queue)
+pop message from queue (string, queue)
+
+The idea with the queues is that we later can put a man in the middle by using two queues party A sends to queue 1 then MITM does things and pushes it to queue 2 before party B picks it up.
+We dont want that implemented yet though.
+
+So in total we need the following showcases:
+
+Confidentiality:
+
+Symmetric Encryption - this should be only a couple of lines, use cryptography
+Asymmetric Encryption - this should be only a couple of lines, use cryptography
+
+we just want to take a string, apply encryption, print the encrypted string
+decrypt the string again and see if it works
+
+Authentication:
+
+We want to use the nonce method where party b sends party A a nonce.
+Party a then encrypts it with their private key.
+party b then decrypts it with the public key of a.
+it then compares the decrypted with the sent nonce.
+
+Integrity:
+
+We want to use the encrypted hash to show that a message was not changed. The message is sent in clear text.
+
+party a hashes the message, then it encrypts it with its own private key. then the encrypted hash + the message is sent a sone package to party B
+party b decrypts the combined message, splits it, hashes the message again on its own and compares the hashes.
+
+All together:
+
+We do two steps. First we need to exchange session keys.
+first party a generates a session key. Then it encrypts it with the public key of party b.
+then it pushes it to the message queue. party b decrypts it with their private key. now both parties have the session keys.
+Now we can send messages. 
+party a encrypts the has of the message using its own private key. then it joins the message as well as the ecrytped hash.
+the combined message is then enrytped with the session key and sent to party b
+party b decrypts it with the symmetric session key.
+then it splits message from encrypted hash, decrypts hash, checks if message intergrity is good.
+if so the message has been successfully transmitted.
+
+
+
+
+
